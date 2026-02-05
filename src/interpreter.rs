@@ -21,6 +21,8 @@ pub struct Runtime {
     pointer_list: [Option<Rc<RefCell<Node>>>; POINTERLIST_SIZE],
     syscalls: [Option<Box<dyn FnMut(Option<u8>) -> Option<u8>>>; SYSCALLS_SIZE],
     abstract_pointers: [Option<Rc<RefCell<Node>>>; SPECIAL_SIZE],
+    output_fn: Box<dyn Fn(u8)>,
+    input_fn: Box<dyn Fn() -> u8>,
 }
 
 impl Node {
@@ -132,6 +134,35 @@ impl Runtime {
             pointer_list: [const { None }; POINTERLIST_SIZE],
             syscalls,
             abstract_pointers: [const { None }; SPECIAL_SIZE],
+            output_fn: Box::new(|x| print!("{}", x as char)),
+            input_fn: Box::new(|| {
+                use std::io::Read;
+                let mut b = [0u8];
+                std::io::stdin().read_exact(&mut b).unwrap();
+                b[0]
+            }),
+        }
+    }
+
+    /// creates a new runtime from the code, input and output byte functions and optional syscalls
+    pub fn with_io_fn(
+        code: Vec<parser::Statement>,
+        syscallsstuff: Vec<(usize, Box<dyn FnMut(Option<u8>) -> Option<u8>>)>,
+        output: Box<dyn Fn(u8)>,
+        input: Box<dyn Fn() -> u8>,
+    ) -> Self {
+        let mut syscalls = [const { None }; SYSCALLS_SIZE];
+        for (i, n) in syscallsstuff {
+            syscalls[i] = Some(n);
+        }
+        Self {
+            code,
+            program_counter: 0,
+            pointer_list: [const { None }; POINTERLIST_SIZE],
+            syscalls,
+            abstract_pointers: [const { None }; SPECIAL_SIZE],
+            output_fn: output,
+            input_fn: input,
         }
     }
 
@@ -153,13 +184,9 @@ impl Runtime {
             New => Some(Node::new()),
             Null => None,
             InChar => {
-                use std::io::Read;
-                let mut b = [0u8];
-                std::io::stdin().read_exact(&mut b).unwrap();
-
                 let beginnode = Node::new();
                 let mut chainthing = beginnode.clone();
-                for _ in 1..b[0] {
+                for _ in 1..self.input_fn.as_ref()() {
                     let newnode = Node::new();
                     Node::connect(&chainthing, &newnode);
                     chainthing = newnode;
@@ -368,7 +395,7 @@ impl Runtime {
                     currnode = child;
                 }
             }
-            print!("{}", count as char);
+            self.output_fn.as_mut()(count);
         }
     }
 
